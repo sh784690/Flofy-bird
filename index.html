@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="bn">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Fluffy Bird</title>
+<style>
+  :root{
+    --sky:#87ceeb;   
+    --pipe:#228B22;  
+    --hud:#222;      
+  }
+  html,body{
+    margin:0;
+    height:100%;
+    background:var(--sky);
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans Bengali", sans-serif;
+    overflow:hidden;
+  }
+  .wrap{
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    height:100%;
+  }
+  .hud{
+    width:100%;
+    display:flex;
+    gap:50px;
+    color:var(--hud);
+    background:white;
+    font-size:14px;
+    font-weight:700;
+    padding: 10px 14px;
+    box-sizing: border-box;
+    user-select:none;
+  }
+  canvas{
+    flex:1;
+    width:100%;
+    height:auto;
+    background:var(--sky);
+    touch-action:none;  
+  }
+  .overlay{
+    position:fixed;
+    inset:0;
+    display:grid;
+    place-items:center;
+    background:rgba(0,0,0,.25);
+    color:#fff;
+    font-weight:700;
+    text-align:center;
+    padding:24px;
+    z-index:10;
+  }
+  .card{
+    background:rgba(0,0,0,.6);
+    border-radius:12px;
+    padding:20px 24px;
+  }
+  .card h1{
+    display:flex;
+    align-items:center;
+    margin:0 8px;
+    font-size: 22px;
+  }
+  .card p{
+    margin: 6px 0;
+  }
+  .btn{
+    display:inline-block;
+    margin-top:12px;
+    padding:10px 16px;
+    border-radius:10px;
+    background:#ffd34d;
+    color:#111;
+    font-weight:800;
+    cursor:pointer;  
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hud">
+      <div id="best">Highest:00</div>
+      <div id="score">Score:00</div>
+    </div>
+    <canvas id="game" width="360" height="640"></canvas>
+  </div>
+
+  <div id="startOv" class="overlay">
+    <div class="card">
+      <h1>Fluffy Bird</h1>
+      <p>tap/click/space = Jump</p>
+      <p>P = Pause, R = Restart</p>
+      <div class="btn" id="startBtn">Start</div>
+    </div>
+  </div>
+  <div id="overOv" class="overlay" style="display:none">
+    <div class="card">
+      <h1>Game Over</h1>
+      <p>Score: <span id="finalScore">0</span> • Best: <span id="bestScore">0</span></p>
+      <div class="btn" id="restartBtn">Restart</div>
+    </div>
+  </div>
+
+  <!-- Audio elements -->
+  <audio id="bgMusic" loop>
+    <source src="background.mp3" type="audio/mpeg">
+  </audio>
+  <audio id="gameOverSound">
+    <source src="gameover.mp3" type="audio/mpeg">
+  </audio>
+
+<script>
+(() => {
+  const cvs = document.getElementById('game');
+  const ctx = cvs.getContext('2d');
+  const hudBest  = document.getElementById('best');
+  const hudScore = document.getElementById('score');
+  const startOv = document.getElementById('startOv');
+  const overOv  = document.getElementById('overOv');
+  const startBtn = document.getElementById('startBtn');
+  const restartBtn = document.getElementById('restartBtn');
+  const finalScoreTxt = document.getElementById('finalScore');
+  const bestScoreTxt  = document.getElementById('bestScore');
+  const bgMusic = document.getElementById('bgMusic');
+  const gameOverSound = document.getElementById('gameOverSound');
+
+  const W = cvs.width, H = cvs.height;
+  const GRAVITY = 0.45, JUMP_V = -7.5, PIPE_GAP = 150, PIPE_W = 78, PIPE_SPEED = 2.2;
+  const SPAWN_EVERY = 210;
+  const BIRD_R = 14;
+
+  // Bird animation frames
+  const birdFrames = [
+    Object.assign(new Image(), {src: 'bird1.png'}),
+    Object.assign(new Image(), {src: 'bird2.png'})
+  ];
+  let birdFrameIndex = 0;
+  let birdFrameTicker = 0;
+
+  let pipes, bird, score, bestScore = +localStorage.getItem('fluffy_best') || 0;
+  let spawnTicker, running=false, paused=false, gameOver=false;
+
+  function reset(){
+    pipes=[]; score=0; spawnTicker=0;
+    bird={x:58,y:H*0.4,vy:0,rot:0};
+    gameOver=false;
+    updateHud();
+  }
+  function updateHud(){
+    hudBest.textContent=`Best:${String(bestScore).padStart(2,'0')}`;
+    hudScore.textContent=`Score:${String(score).padStart(2,'0')}`;
+  }
+  function spawnPipe(){
+    const margin=60;
+    const holeY=Math.floor(Math.random()*(H-2*margin-PIPE_GAP))+margin;
+    pipes.push({x:W+10, topH:holeY, passed:false});
+  }
+  function flap(){ if(!running){start();return;} if(!paused&&!gameOver) bird.vy=JUMP_V; }
+  
+  function start(){
+    reset(); 
+    running=true; 
+    paused=false;
+    startOv.style.display='none'; 
+    overOv.style.display='none';
+    // Play background music
+    bgMusic.currentTime = 0;
+    bgMusic.play();
+    loop();
+  }
+
+  function end(){
+    running=false; 
+    gameOver=true;
+    finalScoreTxt.textContent=score;
+    if(score>bestScore){bestScore=score;localStorage.setItem('fluffy_best',bestScore);}
+    bestScoreTxt.textContent=bestScore;
+    overOv.style.display='grid';
+    // Stop background music
+    bgMusic.pause();
+    // Play game over sound
+    gameOverSound.currentTime = 0;
+    gameOverSound.play();
+  }
+
+  function loop(){
+    if(!running||paused) return;
+    bird.vy+=GRAVITY; bird.y+=bird.vy;
+    spawnTicker+=PIPE_SPEED;
+    if(spawnTicker>=SPAWN_EVERY){spawnTicker=0;spawnPipe();}
+    pipes.forEach(p=>p.x-=PIPE_SPEED);
+    if(pipes.length&&pipes[0].x+PIPE_W<-60) pipes.shift();
+    for(const p of pipes){
+      if(!p.passed&&bird.x>p.x+PIPE_W){p.passed=true;score++;}
+      if(collision(bird,p)) return end();
+    }
+    if(bird.y-BIRD_R<0||bird.y+BIRD_R>H) return end();
+    draw(); updateHud();
+    requestAnimationFrame(loop);
+  }
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle= getComputedStyle(document.documentElement).getPropertyValue('--pipe');
+    for(const p of pipes){
+      ctx.fillRect(p.x,0,PIPE_W,p.topH);
+      ctx.fillRect(p.x,p.topH+PIPE_GAP,PIPE_W,H-(p.topH+PIPE_GAP));
+    }
+
+    // Animate bird
+    birdFrameTicker++;
+    if(birdFrameTicker % 10 === 0){ // প্রতি 10 ফ্রেমে স্যুইচ করবে
+      birdFrameIndex = (birdFrameIndex+1) % birdFrames.length;
+    }
+
+    ctx.save(); ctx.translate(bird.x,bird.y);
+    const img = birdFrames[birdFrameIndex];
+    if(img.complete){
+       //.drawImage(img,-20,-15,40,30);
+      ctx.drawImage(img,-36,-24,55,48)
+    } else {
+      ctx.fillStyle='yellow';
+      ctx.beginPath();ctx.arc(0,0,BIRD_R,0,2*Math.PI);ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function collision(b,p){
+    const rects=[{x:p.x,y:0,w:PIPE_W,h:p.topH},{x:p.x,y:p.topH+PIPE_GAP,w:PIPE_W,h:H-(p.topH+PIPE_GAP)}];
+    for(const r of rects){
+      const tx=Math.max(r.x,Math.min(bird.x,r.x+r.w));
+      const ty=Math.max(r.y,Math.min(bird.y,r.y+r.h));
+      const dx=bird.x-tx, dy=bird.y-ty;
+      if(dx*dx+dy*dy<=BIRD_R*BIRD_R) return true;
+    }
+    return false;
+  }
+
+  // Controls: keyboard + touch
+  window.addEventListener('keydown',e=>{
+    if(e.code==='Space'||e.code==='ArrowUp'){e.preventDefault();flap();}
+    else if(e.code==='KeyP') paused=!paused,loop();
+    else if(e.code==='KeyR') start();
+  });
+  cvs.addEventListener('pointerdown',flap);
+  startBtn.onclick=start; restartBtn.onclick=start;
+
+  reset();
+})();
+</script>
+</body>
+</html>
